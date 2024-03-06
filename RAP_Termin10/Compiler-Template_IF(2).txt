@@ -1,4 +1,0 @@
-Das If-Statement besteht aus drei Hauptteilen: der Bedingung, dem Then-Block, und dem optionalen Else-Block
-Die Bedingung enthält einen Ausdruck oder eine Variable(Operand1), einen Vergleichsoperator und einen weiteren Ausdruck oder eine Variable(Operand2).Es können aber mehrere Bedingungen in einem IF-Statement vorkommen. Diese Bedingungen werden dann ebenfalls mit Vergleichsoperatoren verknüpft. Die Bedingung wird ausgewertet, um zu bestimmen, ob der Then-Block oder Else-BLock ausgeführt wird.
-Der Then-Block enthält eine oder mehrere Anweisungen, die ausgeführt werden, wenn die Bedindung wahr ist.
-Der Else-Block ist optional und enthält anweisungen, die ausgeführt werden, wenn die die Bedingung falsch ist.
