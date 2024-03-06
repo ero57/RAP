@@ -2,9 +2,6 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
--- version with data forwarding to eliminate data hazards
--- NOT TO BE USED YET, only for demonstration
-
 entity rechenwerk is port (
   pc, lit, jumplit : in std_logic_vector(31 downto 0);
   addr_of_rs1, addr_of_rs2, addr_of_rd : in std_logic_vector(4 downto 0);
@@ -20,6 +17,13 @@ entity rechenwerk is port (
 ); end entity;
 
 architecture behav of rechenwerk is
+
+  component MUX is port (
+    in1,in2: in std_logic_vector(31 downto 0);
+    outline: out std_logic_vector(31 downto 0);
+    SEL: in std_logic
+  ); end component;
+
 
   component alu is port (
     op1, op2 : in std_logic_vector(31 downto 0);
@@ -41,57 +45,96 @@ architecture behav of rechenwerk is
   signal rd : std_logic_vector(31 downto 0) := x"ffffffff";
 
   component d_reg is generic(
-    width : natural
+    width : natural := 32
   ); port(
     d_in : in std_logic_vector((width-1) downto 0);
     clk : in std_logic;
     d_out : out std_logic_vector((width-1) downto 0)
   ); end component;
+  
+  component adder32 is port(
+    a     : in std_logic_vector(31 downto 0);
+    b     : in std_logic_vector(31 downto 0);
+    sum   : out std_logic_vector(31 downto 0)
+   -- carry : out std_logic
+  );
+  end component;
 
-  signal pre_jump, pre_op1, pre_op2, pre_jump_delayed, jumplit_delayed : std_logic_vector(31 downto 0) := x"ffffffff";
-  signal a_o_rd_delayed, a_o_rd_delayed_twice, aluop_delayed : std_logic_vector(4 downto 0) := "11111";
-
-  signal rs1_to_mpx, rs2_to_mpx : std_logic_vector(31 downto 0);
-
+  signal jumplit_out: std_logic_vector(31 downto 0) := x"ffffffff";
+  signal MUX_Jump_out,MUX_Jump_out_reg: std_logic_vector(31 downto 0) := x"ffffffff";
+  signal MUX_sel_pc_not_rs1_out,MUX_sel_pc_not_rs1_out_reg: std_logic_vector(31 downto 0) := x"ffffffff";
+  signal MUX_sel_lit_not_rs2_out,MUX_sel_lit_not_rs2_out_reg: std_logic_vector(31 downto 0) := x"ffffffff";
+  signal aluop_out_reg,addr_of_rd_reg_1,addr_of_rd_reg_2: std_logic_vector(4 downto 0) := "00000";
+  signal aluout_reg: std_logic_vector(31 downto 0) := x"ffffffff";
+--  signal carry: std_logic := '0';
+  signal sum: std_logic_vector(31 downto 0) := x"00000000";
+  signal rs1_MUX, rs2_MUX : std_logic_vector(31 downto 0);
+  
 begin
-  -- debug
-  debug_rd <= rd;
-  debug_addr_of_rd <= a_o_rd_delayed_twice;
-
-  -- cpu registers
-  the_regs: cpu_registers port map(addr_of_rs1, addr_of_rs2, rs1, rs2, a_o_rd_delayed_twice, rd, cpuclk);
-
-  -- no data forwarding:
-  --rs1_to_mpx <= rs1; rs2_to_mpx <= rs2;
-
-  -- with data forwarding
-  rs1_to_mpx <= rs1    when addr_of_rs1="00000"
-           else aluout when a_o_rd_delayed=addr_of_rs1
-           else rd     when a_o_rd_delayed_twice=addr_of_rs1
-           else rs1;
-  rs2_to_mpx <= rs2    when addr_of_rs2="00000"
-           else aluout when a_o_rd_delayed=addr_of_rs2
-           else rd     when a_o_rd_delayed_twice=addr_of_rs2
-           else rs2;
-
-  -- operand fetch
-  pre_op1 <= pc  when sel_pc_not_rs1 ='1' else rs1_to_mpx;
-  pre_op2 <= lit when sel_lit_not_rs2='1' else rs2_to_mpx;
-  pre_jump <= pc when is_jalr='0' else rs1_to_mpx;
-
-  -- execute
-  the_alu: alu port map(op1, op2, aluout, aluop_delayed, do_jump);
-  jumpdest <= std_logic_vector(unsigned(pre_jump_delayed) + unsigned(jumplit_delayed));
-
-  -- pipeline registers
-  op1_23: d_reg generic map(32) port map(pre_op1, cpuclk, op1);
-  op2_23: d_reg generic map(32) port map(pre_op2, cpuclk, op2);
-  aluop_23: d_reg generic map(5) port map(aluop, cpuclk, aluop_delayed);
-  pre_jump_23: d_reg generic map(32) port map(pre_jump, cpuclk, pre_jump_delayed);       -- needs init with 0
-  a_o_rd_23: d_reg generic map(5) port map(addr_of_rd, cpuclk, a_o_rd_delayed);          -- needs init with 0
-  jumplit_23: d_reg generic map(32) port map(jumplit, cpuclk, jumplit_delayed);
-
-  -- more pipeline registers
-  a_o_rd_34: d_reg generic map(5) port map(a_o_rd_delayed, cpuclk, a_o_rd_delayed_twice); -- needs init with 0
-  aluout_34: d_reg generic map(32) port map(aluout, cpuclk, rd);
+	registers_inst: cpu_registers
+		port map (
+		addr_of_rs1 => addr_of_rs1,
+		addr_of_rs2 => addr_of_rs2,
+		rs1 => rs1,
+		rs2 => rs2,
+		addr_of_rd => addr_of_rd_reg_2,
+		rd => aluout_reg,
+		clk => cpuclk
+		);
+	
+	--Operand Fetch	
+	
+  rs1_MUX <= rs1  when addr_of_rs1="00000"
+ 									else aluout when addr_of_rd_reg_1 = addr_of_rs1
+  								else rd when addr_of_rd_reg_2 = addr_of_rs1 else rs1;
+  rs2_MUX <= rs2 when addr_of_rs2="00000" 
+  								else aluout when addr_of_rd_reg_1 = addr_of_rs2
+  								else rd when addr_of_rd_reg_2 = addr_of_rs2
+  								else rs2;     
+           
+	--Multiplexer Jump	
+	MUX_Jump: MUX port map(in1 => rs1, in2 => pc, outline => MUX_Jump_out, SEL => is_jalr); 
+	--Multiplexer pc oder rs1
+	MUX_sel_pc_not_rs1: MUX port map(in1 => pc, in2 => rs1_MUX, outline => MUX_sel_pc_not_rs1_out, SEL => sel_pc_not_rs1);
+	--Multiplexer lit oder rs2
+	MUX_sel_lit_not_rs2: MUX port map(in1 => lit, in2 => rs2_MUX, outline => MUX_sel_lit_not_rs2_out, SEL => sel_lit_not_rs2);
+	
+	--Execute
+	
+	--Pipelineregister 1 Takt addr_of_rd
+  d_reg_1_takt_addr_rd: d_reg generic map (width => 5) port map (d_in => addr_of_rd, clk => cpuclk, d_out => addr_of_rd_reg_1);
+  
+  --Piplineregister Jumplitreal
+	d_reg_jumplit: d_reg generic map (width => 32) port map (d_in => jumplit, clk => cpuclk, d_out => jumplit_out);    
+	
+	--Pipelineregister Multiplexer Jump
+	d_reg_jump_MUX: d_reg generic map (width => 32) port map (d_in => MUX_Jump_out, clk => cpuclk, d_out => MUX_Jump_out_reg);
+	
+	--Pipelineregister Multiplexer pc oder rs1
+	d_reg_sel_pc_not_rs1_MUX: d_reg generic map (width => 32) port map (d_in => MUX_sel_pc_not_rs1_out, clk => cpuclk, d_out => MUX_sel_pc_not_rs1_out_reg);
+	
+	--Pipelineregister Multiplexer lit oder rs2
+	d_reg_sel_lit_not_rs2_MUX: d_reg generic map (width => 32) port map (d_in =>  MUX_sel_lit_not_rs2_out, clk => cpuclk, d_out => MUX_sel_lit_not_rs2_out_reg);
+	
+	--Pipelineregiste aluop
+	d_reg_aluop: d_reg generic map (width => 5) port map (d_in => aluop, clk => cpuclk, d_out => aluop_out_reg);
+	
+	--ALU
+	ALU_1: alu port map(op1 => MUX_sel_pc_not_rs1_out_reg, op2 => MUX_sel_lit_not_rs2_out_reg, aluop => aluop_out_reg, aluout =>  			 aluout , do_jump => do_jump);
+	
+	-- Jumpdest
+	jumpdest1: adder32 port map (a => jumplit, b => MUX_Jump_out_reg,sum=>sum);
+	
+	--Store
+	
+  --Pipelineregister aluout
+	d_reg_aluout: d_reg generic map (width => 32) port map (d_in => aluout, clk => cpuclk, d_out => aluout_reg);
+	
+	--Pipelineregister 2 Takt addr_of_rd
+	d_reg_2_takt_addr_rd: d_reg generic map (width => 5) port map (d_in => addr_of_rd_reg_1, clk => cpuclk, d_out => addr_of_rd_reg_2);
+	
+	
+	jumpdest <= sum;
+	debug_rd <=  aluout_reg;
+	debug_addr_of_rd <= addr_of_rd_reg_2;
 end architecture;
